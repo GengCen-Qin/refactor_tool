@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+# -*- coding: utf-8 -*-
+
+# 添加lib目录到加载路径
+$LOAD_PATH.unshift(File.expand_path('../lib', __FILE__))
+
+require 'extract_method'
+
+# 仅当作为脚本运行时执行，被require时不执行
+if __FILE__ == $0
+  # 检查参数
+  if ARGV.length < 4
+    puts "Usage: #{$0} <filename> <code_snippet> <start_line> <start_column>"
+    exit 1
+  end
+
+  filename, code_snippet, start_line, start_column = ARGV
+  
+  # 执行方法抽取
+  exit 1 unless ExtractMethod.extract(filename, code_snippet, start_line, start_column)
+end
