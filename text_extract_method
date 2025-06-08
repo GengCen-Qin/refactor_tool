@@ -1,77 +1,143 @@
 #!/usr/bin/env ruby
 
-# Method to extract code to a new method
-def extract_method(file_path, code_snippet, start_line_number)
-  # Read the file content
-  content = File.read(file_path)
-  lines = content.split("\n")
+# 方法提取器类 - 负责处理代码中的方法提取操作
+class MethodExtractor
+  def initialize(file_path)
+    @file_path = file_path
+    @content = File.read(file_path)
+    @lines = @content.split("\n")
+  end
 
-  # Find the function boundary
-  def_line = nil
-  end_line = nil
-  indent_level = nil
+  # 核心方法：处理代码提取流程
+  # @param code_snippet [String] 需要提取的代码片段
+  # @param start_line_number [Integer] 代码开始的行号
+  # @return [String] 操作状态信息或错误信息
+  def extract_method(code_snippet, start_line_number)
+    # 查找方法的边界（开始和结束位置）
+    method_bounds = find_method_boundaries(start_line_number)
+    return method_bounds if method_bounds.is_a?(String) # 如果返回字符串说明是错误信息
 
-  # Search upward for the enclosing method definition
-  (start_line_number - 1).downto(0) do |i|
-    if lines[i] =~ /^\s*def\s+/
-      def_line = i
-      indent_level = lines[i].match(/^(\s*)/)[1].length
-      break
+    def_line, end_line, indent_level = method_bounds
+    is_class_method = class_method?(@lines[def_line])
+
+    # 获取新方法名称
+    new_method_name = get_method_name
+    return "操作已取消" if new_method_name.nil?
+
+    # 创建新方法并保存
+    new_method = create_new_method(new_method_name, code_snippet, indent_level, is_class_method)
+    insert_and_save_method(new_method, end_line)
+
+    "方法提取成功"
+  end
+
+  private
+
+  # 查找方法的边界信息
+  # @param start_line_number [Integer] 开始搜索的行号
+  # @return [Array, String] 返回包含[def_line, end_line, indent_level]的数组或错误信息
+  def find_method_boundaries(start_line_number)
+    def_line = find_method_definition(start_line_number)
+    return "未找到包含的方法定义" unless def_line
+
+    indent_level = get_indent_level(@lines[def_line])
+    end_line = find_method_end(def_line, indent_level)
+    return "未找到方法结束位置" unless end_line
+
+    [def_line, end_line + 1, indent_level]
+  end
+
+  # 向上查找方法定义
+  # @param start_line_number [Integer] 开始搜索的行号
+  # @return [Integer, nil] 返回方法定义的行号，如果没找到则返回nil
+  def find_method_definition(start_line_number)
+    (start_line_number - 1).downto(0) do |i|
+      return i if @lines[i] =~ /^\s*def\s+/
     end
+    nil
   end
 
-  return "Cannot find enclosing method" unless def_line
-
-  # Find the end of the enclosing method by tracking nesting level
-  ((def_line + 1)..lines.length - 1).each do |i|
-    line = lines[i]
-    next unless line.include?('end') && line.strip == 'end' && line.match(/^(\s*)/)[1].length == indent_level
-
-    end_line = i + 1
-    break
+  # 获取缩进级别
+  # @param line [String] 需要检查的代码行
+  # @return [Integer] 返回前导空格的数量
+  def get_indent_level(line)
+    line.match(/^(\s*)/)[1].length
   end
 
-  return "Cannot find method end" unless end_line
+  # 查找方法的结束位置
+  # @param def_line [Integer] 方法定义的行号
+  # @param indent_level [Integer] 方法的缩进级别
+  # @return [Integer, nil] 返回方法结束的行号，如果没找到则返回nil
+  def find_method_end(def_line, indent_level)
+    ((def_line + 1)..@lines.length - 1).each do |i|
+      line = @lines[i]
+      if line.include?('end') && line.strip == 'end' &&
+         get_indent_level(line) == indent_level
+        return i
+      end
+    end
+    nil
+  end
 
-  # Check if it's a class method
-  is_class_method = lines[def_line].include?('self.')
+  # 检查是否为类方法
+  # @param def_line [String] 方法定义行
+  # @return [Boolean] 是否为类方法
+  def class_method?(def_line)
+    def_line.include?('self.')
+  end
 
-  # Get user input for new method name with clear prompt
-  STDOUT.print "Enter new method name: "
-  STDOUT.flush  # Ensure prompt is displayed
-  new_method_name = STDIN.gets.chomp
-  while new_method_name.empty?
-    STDOUT.print "Method name cannot be empty. Enter new method name: "
+  # 获取新方法名称（通过用户输入）
+  # @return [String, nil] 返回方法名或如果用户取消则返回nil
+  def get_method_name
+    STDOUT.print "请输入新方法名称: "
     STDOUT.flush
-    new_method_name = STDIN.gets.chomp
+    name = STDIN.gets.chomp
+    while name.empty?
+      STDOUT.print "方法名不能为空，请重新输入: "
+      STDOUT.flush
+      name = STDIN.gets.chomp
+    end
+    name
   end
 
-  # Create the new method
-  new_method = if is_class_method
-                 "\n#{' ' * indent_level}def self.#{new_method_name}\n"
-               else
-                 "\n#{' ' * indent_level}def #{new_method_name}\n"
-               end
+  # 创建新的方法定义
+  # @param method_name [String] 方法名
+  # @param code_snippet [String] 代码片段
+  # @param indent_level [Integer] 缩进级别
+  # @param is_class_method [Boolean] 是否为类方法
+  # @return [String] 格式化后的方法定义
+  def create_new_method(method_name, code_snippet, indent_level, is_class_method)
+    # 创建方法头部
+    method_def = if is_class_method
+                  "\n#{' ' * indent_level}def self.#{method_name}\n"
+                else
+                  "\n#{' ' * indent_level}def #{method_name}\n"
+                end
 
-  # Add the code snippet with proper indentation
-  code_snippet.split("\n").each do |line|
-    new_method += "#{' ' * (indent_level + 2)}#{line.strip}\n"
+    # 添加方法体（代码片段）
+    code_snippet.split("\n").each do |line|
+      method_def += "#{' ' * (indent_level + 2)}#{line.strip}\n"
+    end
+
+    # 添加方法结束
+    method_def += "#{' ' * indent_level}end\n"
+    method_def
   end
 
-  new_method += "#{' ' * indent_level}end\n"
-
-  # Insert the new method before the end of the current method
-  lines.insert(end_line, new_method)
-
-  # Write back to file
-  File.write(file_path, lines.join("\n"))
+  # 将新方法插入到文件并保存
+  # @param new_method [String] 新方法的代码
+  # @param insert_position [Integer] 插入位置
+  def insert_and_save_method(new_method, insert_position)
+    @lines.insert(insert_position, new_method)
+    File.write(@file_path, @lines.join("\n"))
+  end
 end
 
-# When run directly from command line
+# 命令行直接运行时的处理逻辑
 if __FILE__ == $0
   if ARGV.length != 3
-    puts "Usage: #{$0} file_path line_number \"code_snippet\""
-    puts "Example: #{$0} my_file.rb 10 \"puts 'hello world'\""
+    puts "使用方法: #{$0} 文件路径 行号 \"代码片段\""
+    puts "示例: #{$0} my_file.rb 10 \"puts 'hello world'\""
     exit 1
   end
 
@@ -80,10 +146,11 @@ if __FILE__ == $0
   code_snippet = ARGV[2]
 
   unless File.exist?(file_path)
-    puts "File not found: #{file_path}"
+    puts "未找到文件: #{file_path}"
     exit 1
   end
 
-  result = extract_method(file_path, code_snippet, line_number)
+  extractor = MethodExtractor.new(file_path)
+  result = extractor.extract_method(code_snippet, line_number)
   puts result
 end
