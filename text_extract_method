@@ -1,236 +1,90 @@
 #!/usr/bin/env ruby
-require 'fileutils'
 
-class TextExtractMethod
-  def initialize(filename, code_snippet, start_line, new_method_name = nil)
-    @filename = filename
-    @code_snippet = code_snippet
-    @start_line = start_line.to_i
-    @new_method_name = new_method_name
-    @backup_file = "#{filename}.bak"
-  end
+# Method to extract code to a new method
+def extract_method(file_path, code_snippet, start_line_number)
+  # Read the file content
+  content = File.read(file_path)
+  lines = content.split("\n")
+  p "lines: #{lines.length}"
 
-  def extract
-    # 检查文件是否存在
-    unless File.exist?(@filename)
-      puts "错误：找不到文件 #{@filename}"
-      return false
-    end
+  # Find the function boundary
+  def_line = nil
+  end_line = nil
+  indent_level = nil
 
-    # 创建备份
-    FileUtils.cp(@filename, @backup_file)
-    puts "已创建备份：#{@backup_file}"
-
-    # 读取源文件
-    @source_lines = File.readlines(@filename, chomp: true)
-
-    # 定位代码片段
-    snippet_location = locate_snippet
-    unless snippet_location
-      puts '错误：无法在文件中定位到指定代码片段'
-      return false
-    end
-
-    # 定位类的范围
-    class_range = find_class_range(snippet_location[:start_line])
-    unless class_range
-      puts '错误：无法找到包含代码片段的类'
-      return false
-    end
-
-    # 检查是否为类方法
-    is_class_method = is_in_class_method?(snippet_location[:start_line])
-
-    # 确定新方法名
-    method_name = @new_method_name || get_method_name_from_user
-    return false unless method_name && valid_method_name?(method_name)
-
-    # 执行代码提取
-    perform_extraction(snippet_location, class_range, method_name, is_class_method)
-
-    # 指定 rubocop -a 当前文件进行格式化
-    system("rubocop -a #{@filename}")
-
-    puts "成功：已将代码片段提取到新方法 '#{method_name}' 中"
-    true
-  end
-
-  private
-
-  def locate_snippet
-    snippet_lines = @code_snippet.split("\n")
-    first_line = snippet_lines.first&.strip
-    return nil unless first_line
-
-    # 在目标行附近搜索
-    search_start = [@start_line - 5, 0].max
-    search_end = [@start_line + 5, @source_lines.length - 1].min
-
-    (search_start..search_end).each do |i|
-      next unless @source_lines[i].strip.include?(first_line)
-
-      # 检查后续行是否匹配
-      matched = true
-      snippet_lines.each_with_index do |snippet_line, j|
-        source_index = i + j
-        next unless source_index >= @source_lines.length ||
-                    !@source_lines[source_index].strip.include?(snippet_line.strip)
-
-        matched = false
-        break
-      end
-
-      if matched
-        return {
-          start_line: i + 1,
-          end_line: i + snippet_lines.length
-        }
-      end
-    end
-
-    nil
-  end
-
-  def find_class_range(line_number)
-    # 向上搜索类定义
-    class_start = nil
-    class_indent = nil
-
-    (line_number - 1).downto(0) do |i|
-      next unless @source_lines[i] =~ /^\s*class\s+\w+/
-
-      class_start = i + 1
-      class_indent = @source_lines[i][/^\s*/]
+  # Search upward for the enclosing method definition
+  (start_line_number - 1).downto(0) do |i|
+    if lines[i] =~ /^\s*def\s+/
+      def_line = i
+      indent_level = lines[i].match(/^(\s*)/)[1].length
       break
     end
-
-    return nil unless class_start
-
-    # 向下搜索类结束
-    nesting_level = 1
-    class_end = nil
-
-    (class_start...@source_lines.length).each do |i|
-      line = @source_lines[i]
-      nesting_level += 1 if line =~ /^\s*(?:class|module|def)\b/
-      nesting_level -= 1 if line =~ /^\s*end\b/
-
-      if nesting_level == 0
-        class_end = i + 1
-        break
-      end
-    end
-
-    return nil unless class_end
-
-    {
-      start_line: class_start,
-      end_line: class_end,
-      indent: class_indent || '  '
-    }
   end
 
-  def is_in_class_method?(line_number)
-    (line_number - 1).downto(0) do |i|
-      line = @source_lines[i]
-      return true if line =~ /^\s*def\s+self\./
-      return false if line =~ /^\s*def\s+[^.]/
-    end
-    false
+  return "Cannot find enclosing method" unless def_line
+
+  # Find the end of the enclosing method by tracking nesting level
+  ((def_line + 1)..lines.length - 1).each do |i|
+    line = lines[i]
+    next unless line.include?('end') && line.strip == 'end' && line.match(/^(\s*)/)[1].length == indent_level
+
+    end_line = i + 1
+    break
   end
 
-  def get_method_name_from_user
-    puts '请输入新函数名：'
-    name = $stdin.gets&.strip
-    name.empty? ? nil : name
+  return "Cannot find method end" unless end_line
+
+  # Check if it's a class method
+  is_class_method = lines[def_line].include?('self.')
+
+  # Get user input for new method name with clear prompt
+  STDOUT.print "Enter new method name: "
+  STDOUT.flush  # Ensure prompt is displayed
+  new_method_name = STDIN.gets.chomp
+  while new_method_name.empty?
+    STDOUT.print "Method name cannot be empty. Enter new method name: "
+    STDOUT.flush
+    new_method_name = STDIN.gets.chomp
   end
 
-  def valid_method_name?(name)
-    if name =~ /^[a-z_][a-zA-Z0-9_]*$/
-      true
-    else
-      puts "错误：非法方法名 '#{name}'"
-      puts '方法名必须以小写字母或下划线开头，只能包含字母、数字和下划线'
-      false
-    end
+  # Create the new method
+  new_method = if is_class_method
+                 "\n#{' ' * indent_level}def self.#{new_method_name}\n"
+               else
+                 "\n#{' ' * indent_level}def #{new_method_name}\n"
+               end
+
+  # Add the code snippet with proper indentation
+  code_snippet.split("\n").each do |line|
+    new_method += "#{' ' * (indent_level + 2)}#{line.strip}\n"
   end
 
-  def perform_extraction(snippet_location, class_range, new_method_name, is_class_method)
-    # 提取要移动的代码
-    extracted_lines = @source_lines[(snippet_location[:start_line] - 1)...snippet_location[:end_line]]
+  new_method += "#{' ' * indent_level}end\n"
 
-    # 获取最小缩进级别
-    min_indent = extracted_lines.reject(&:empty?)
-                                .map { |line| line[/^\s*/].length }
-                                .min || 0
+  # Insert the new method before the end of the current method
+  lines.insert(end_line, new_method)
 
-    # 创建新方法定义
-    method_def = []
-    method_def << '' # 空行分隔
-
-    # 添加方法定义行
-    prefix = is_class_method ? 'def self.' : 'def '
-    method_def << "#{class_range[:indent]}#{prefix}#{new_method_name}"
-
-    # 添加方法体，调整缩进
-    extracted_lines.each do |line|
-      if line.strip.empty?
-        method_def << line
-      else
-        # 移除原有缩进并添加新的缩进
-        content = line[min_indent..-1] || ''
-        method_def << "#{class_range[:indent]}  #{content}"
-      end
-    end
-
-    # 添加方法结束
-    method_def << "#{class_range[:indent]}end"
-
-    # 构建新的源代码
-    result = []
-
-    # 1. 添加代码片段之前的代码
-    result.concat(@source_lines[0...(snippet_location[:start_line] - 1)])
-
-    # 2. 添加方法调用
-    indent = @source_lines[snippet_location[:start_line] - 1][/^\s*/]
-    result << "#{indent}#{new_method_name}"
-
-    # 3. 添加代码片段之后到类结束之前的代码
-    next_line = snippet_location[:end_line]
-    class_end = class_range[:end_line] - 1 # 转为0-based索引
-
-    result.concat(@source_lines[next_line...class_end]) if next_line <= class_end
-
-    # 4. 添加新方法
-    result.concat(method_def)
-
-    # 5. 添加类的结束
-    result << "#{class_range[:indent]}end"
-
-    # 6. 添加剩余代码（如果有）
-    result.concat(@source_lines[class_range[:end_line]..-1]) if class_range[:end_line] < @source_lines.length
-
-    # 写回文件
-    File.write(@filename, result.join("\n") + "\n")
-  end
+  # Write back to file
+  File.write(file_path, lines.join("\n"))
 end
 
+# When run directly from command line
 if __FILE__ == $0
-  if ARGV.length < 3
-    puts "使用方法: #{File.basename($0)} <filename> <code_snippet> <start_line> [<new_method_name>]"
-    puts '参数说明:'
-    puts '  filename        - 源代码文件路径'
-    puts '  code_snippet    - 要提取的代码片段(多行代码用\\n分隔)'
-    puts '  start_line      - 代码片段的起始行号'
-    puts '  new_method_name - 可选的新方法名'
+  if ARGV.length != 3
+    puts "Usage: #{$0} file_path line_number \"code_snippet\""
+    puts "Example: #{$0} my_file.rb 10 \"puts 'hello world'\""
     exit 1
   end
 
-  filename = ARGV[0]
-  code_snippet = ARGV[1].gsub('\n', "\n") # 处理命令行传入的多行代码
-  start_line = ARGV[2].to_i
+  file_path = ARGV[0]
+  line_number = ARGV[1].to_i
+  code_snippet = ARGV[2]
 
-  extractor = TextExtractMethod.new(filename, code_snippet, start_line, nil)
-  exit(extractor.extract ? 0 : 1)
+  unless File.exist?(file_path)
+    puts "File not found: #{file_path}"
+    exit 1
+  end
+
+  result = extract_method(file_path, code_snippet, line_number)
+  puts result
 end
