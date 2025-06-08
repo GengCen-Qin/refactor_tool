@@ -5,7 +5,6 @@ def extract_method(file_path, code_snippet, start_line_number)
   # Read the file content
   content = File.read(file_path)
   lines = content.split("\n")
-  p "lines: #{lines.length}"
 
   # Find the function boundary
   def_line = nil
